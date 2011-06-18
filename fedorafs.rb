@@ -93,14 +93,23 @@ class FedoraFS < FuseFS::FuseDir
       return rest.nil?
     else
       params = RISEARCH_PARAMS.merge(:query => RISEARCH_TEMPLATE % (rest || base))
-      @repo['risearch'].post(params) =~ /info:fedora/ ? true : false
+      response = @repo['risearch'].post(params) 
+      response =~ /info:fedora/ ? true : false
     end
   end
   
   def file?(path)
     return false if path =~ /\._/
     base, rest = split_path(path)
-    contents(base).include?(rest)
+    begin
+      if rest.nil?
+        directory?(base)
+      else
+        contents("/#{base}").include?(rest)
+      end
+    rescue Exception => e
+      return false
+    end
   end
   
   def size(path)
