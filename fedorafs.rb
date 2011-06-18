@@ -119,8 +119,7 @@ class FedoraFS < FuseFS::FuseDir
   end
   
   def can_write?(path)
-    return false # for now, until writing doesn't hang
-    return false if path =~ /\._/
+    return true if path =~ /\._/ # We'll fake it out in #write_to()
     base, rest = split_path(path)
     file?(path) and (rest != FOXML_XML)
   end
