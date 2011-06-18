@@ -20,11 +20,18 @@ RISEARCH_TEMPLATE = "select $object from <#ri> where $object <dc:identifier> '%s
 class FedoraFS < FuseFS::FuseDir
   attr_reader :repo, :solr
   
+#  def respond_to?(sym)
+#    result = super
+#    $stderr.puts("respond_to? #{sym.inspect} :: #{result}")
+#    result
+#  end
+  
   def initialize(fedora_url, opts = {})
     @cache = LruHash.new(opts.delete(:cache_size) || 1000)
     if opts[:solr]
       @solr = RestClient::Resource.new(opts.delete(:solr))
     end
+    @pids = []
     @repo = RestClient::Resource.new(fedora_url, opts)
   end
   
