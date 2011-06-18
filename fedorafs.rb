@@ -221,6 +221,7 @@ if (File.basename($0) == File.basename(__FILE__))
   
   url = nil
   init_opts = { :ssl_client_cert => nil, :ssl_client_key => nil, :key_pass => '', :solr => nil }
+  volume_name = 'Fedora'
   
   optparse = OptionParser.new do |opts|
     opts.banner = "Usage: #{File.basename($0)} [options] <fedora-url> <mount-point>"
@@ -243,6 +244,10 @@ if (File.basename($0) == File.basename(__FILE__))
     
     opts.on('-s', '--solr URI', "Base URI of Fedora solr server") do |uri|
       init_opts[:solr] = uri
+    end
+    
+    opts.on('-v', '--volname NAME', "Mount the volume as NAME") do |val|
+      volume_name = val
     end
     
     opts.on_tail('-h', '--help', "Show this help message") do
@@ -278,6 +283,6 @@ if (File.basename($0) == File.basename(__FILE__))
 
   # Set the root FuseFS
   FuseFS.set_root(root)
-  FuseFS.mount_under(dirname)
+  FuseFS.mount_under(dirname, 'noappledouble', 'noapplexattr', 'nolocalcaches', %{volname=#{volume_name}})
   FuseFS.run # This doesn't return until we're unmounted.
 end
