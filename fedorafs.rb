@@ -142,12 +142,16 @@ class FedoraFS < FuseFS::FuseDir
   
   def write_to(path,content)
     return content if path =~ /\._/
-    base, rest = split_path(path)
-    dsid = dsid_from_filename(rest)
-    mime = ds_properties(base,dsid)['dsmime'] || 'application/octet-stream'
-    resource = @repo["object/#{base}/datastreams/#{dsid}?logMessage=Fedora+FUSE+FS"]
-    resource.put(content, :content_type => mime)
-    read_file(path)
+    begin
+      base, rest = split_path(path)
+      dsid = dsid_from_filename(rest)
+      mime = ds_properties(base,dsid)['dsmime'] || 'application/octet-stream'
+      resource = @repo["objects/#{base}/datastreams/#{dsid}?logMessage=Fedora+FUSE+FS"]
+      resource.put(content, :content_type => mime)
+      return true
+    rescue Exception => e
+      return false
+    end
   end
   
   def can_mkdir?(path)
@@ -159,7 +163,7 @@ class FedoraFS < FuseFS::FuseDir
   end
   
   def can_delete?(path)
-    return false
+    return true # We're never actually going to delete anything, though.
   end
 
 #  private
