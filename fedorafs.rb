@@ -2,6 +2,7 @@
 
 require 'rubygems'
 require 'bundler/setup'
+require 'fileutils'
 require 'fusefs'
 require 'json'
 require 'nokogiri'
@@ -16,7 +17,7 @@ FOXML_XML = 'foxml.xml'
 RISEARCH_PARAMS = { :type => 'tuples', :lang => 'itql', :format => 'CSV', :limit => '1000' }
 RISEARCH_TEMPLATE = "select $object from <#ri> where $object <dc:identifier> '%s'"
 
-class DorFS < FuseFS::FuseDir
+class FedoraFS < FuseFS::FuseDir
   attr_reader :repo, :solr
   
   def initialize(fedora_url, opts = {})
@@ -33,7 +34,29 @@ class DorFS < FuseFS::FuseDir
     end
     @cache[pid]
   end
-    
+
+  # atime, ctime, mtime, and utime aren't implemented in FuseFS yet
+  def atime(path)
+    utime(path)
+  end
+
+  def ctime(path)
+    utime(path)
+  end
+  
+  def mtime(path)
+    utime(path)
+  end
+  
+  def utime(path)
+    base, rest = split_path(path)
+    if rest.nil?
+      Time.now
+    else
+      Time.parse(ds_properties(base, rest)['dscreatedate'])
+    end
+  end
+  
   def contents(path)
     base, rest = split_path(path)
     if base.nil?
@@ -219,8 +242,12 @@ if (File.basename($0) == File.basename(__FILE__))
   uri = ARGV.shift
   dirname = ARGV.shift
   unless File.directory?(dirname)
-    puts "Usage: #{dirname} is not a directory."
-    exit
+    if File.exists?(dirname)
+      puts "Usage: #{dirname} is not a directory."
+      exit
+    else
+      FileUtils.mkdir_p(dirname)
+    end
   end
 
   if uri =~ %r{^(.+)/fedora$} and init_opts[:solr].nil?
@@ -228,12 +255,10 @@ if (File.basename($0) == File.basename(__FILE__))
     $stderr.puts "Default solr: #{init_opts[:solr]}"
   end
 
-  root = DorFS.new(uri, init_opts)
+  root = FedoraFS.new(uri, init_opts)
 
   # Set the root FuseFS
   FuseFS.set_root(root)
-
   FuseFS.mount_under(dirname)
-
   FuseFS.run # This doesn't return until we're unmounted.
 end
