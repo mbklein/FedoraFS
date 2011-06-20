@@ -14,11 +14,15 @@ require 'mime/types'
 include FuseFS
 
 FOXML_XML = 'foxml.xml'
-RISEARCH_PARAMS = { :type => 'tuples', :lang => 'itql', :format => 'CSV', :limit => '1000' }
-RISEARCH_TEMPLATE = "select $object from <#ri> where $object <dc:identifier> '%s'"
+RISEARCH_DIRECTORY_PARAMS = { :type => 'triples', :lang => 'spo', :format => 'count' }
+RISEARCH_DIRECTORY_TEMPLATE = "<info:fedora/%1$s> <dc:identifier> '%1$s'"
+RISEARCH_CONTENTS_PARAMS = { :type => 'tuples', :lang => 'itql', :format => 'CSV' }
+RISEARCH_CONTENTS_TEMPLATE = "select $object from <#ri> where $object <info:fedora/fedora-system:def/model#label> $label"
 
 class FedoraFS < FuseFS::FuseDir
-  attr_reader :repo, :solr
+  class PathError < Exception; end
+  
+  attr_reader :repo, :splitters
   
 #  def respond_to?(sym)
 #    result = super
@@ -28,11 +32,9 @@ class FedoraFS < FuseFS::FuseDir
   
   def initialize(fedora_url, opts = {})
     @cache = LruHash.new(opts.delete(:cache_size) || 1000)
-    if opts[:solr]
-      @solr = RestClient::Resource.new(opts.delete(:solr))
-    end
     @pids = []
     @repo = RestClient::Resource.new(fedora_url, opts)
+    @splitters = { :default => /.+/, 'fedora-system' => /.+/, 'druid' => /([a-z]{2})([0-9]{3})([a-z]{2})([0-9]{4})/ }
   end
   
   def cache(pid)
@@ -42,6 +44,82 @@ class FedoraFS < FuseFS::FuseDir
     @cache[pid]
   end
 
+  def contents(path)
+    parts = scan_path(path)
+    if parts.empty?
+      return build_pid_tree.keys
+    else
+      current_dir, dir_part, parts = traverse(parts)
+      if current_dir.nil?
+        files = begin
+          [FOXML_XML] + datastreams(dir_part).collect do |ds|
+            mime = MIME::Types[ds_properties(dir_part,ds)['dsmime']].first
+            mime.nil? ? ds : "#{ds}.#{mime.extensions.first}"
+          end
+        rescue Exception => e
+          puts e.inspect
+          []
+        end
+        if parts.empty?
+          files
+        else
+          fname = parts.shift
+          files.select { |f| f == fname }
+        end
+      else
+        return current_dir.keys
+      end
+    end
+  end
+
+  def directory?(path)
+    return false if path =~ /\._/
+    parts = scan_path(path)
+    return true if parts.empty?
+    current_dir, dir_part, parts = begin
+      traverse(parts)
+    rescue PathError
+      return false
+    end
+    if current_dir.nil?
+      return parts.empty?
+    else
+      return true
+    end
+  end
+  
+  def file?(path)
+    return false if path =~ /\._/
+    parts = scan_path(path)
+    current_dir, dir_part, parts = begin
+      traverse(parts)
+    rescue PathError
+      return false
+    end
+    if parts.empty?
+      return true
+    else
+      contents(File.dirname(path)).include?(parts.last)
+    end
+  end
+  
+  def size(path)
+    return false if path =~ /\._/
+    parts = scan_path(path)
+    current_dir, dir_part, parts = begin
+      traverse(parts)
+    rescue PathError
+      return false
+    end
+
+    if parts.last == FOXML_XML
+      read_file(path).length
+    else
+      dsid = dsid_from_filename(parts.last)
+      ds_properties(dir_part, dsid)['dssize'].to_i
+    end
+  end
+  
   # atime, ctime, mtime, and utime aren't implemented in FuseFS yet
   def atime(path)
     utime(path)
@@ -56,97 +134,40 @@ class FedoraFS < FuseFS::FuseDir
   end
   
   def utime(path)
-    base, rest = split_path(path)
-    if rest.nil?
-      Time.now
-    else
-      Time.parse(ds_properties(base, rest)['dscreatedate'])
-    end
-  end
-  
-  def contents(path)
-    base, rest = split_path(path)
-    if base.nil?
-      gather_all_pids
-    elsif base
-      files = begin
-        [FOXML_XML] + datastreams(base).collect do |ds|
-          mime = MIME::Types[ds_properties(base,ds)['dsmime']].first
-          mime.nil? ? ds : "#{ds}.#{mime.extensions.first}"
-        end
-      rescue Exception => e
-        puts e.inspect
-        []
-      end
-      if rest.nil?
-        files
-      else
-        files.has_key?(rest) ? [rest] : []
-      end
-    end
-  end
-
-  def directory?(path)
-    return false if path =~ /\._/
-    base, rest = split_path(path)
-    if @pids.include?(base) or @cache.has_key?(base)
-      return rest.nil?
-    else
-      params = RISEARCH_PARAMS.merge(:query => RISEARCH_TEMPLATE % (rest || base))
-      response = @repo['risearch'].post(params) 
-      response =~ /info:fedora/ ? true : false
-    end
-  end
-  
-  def file?(path)
-    return false if path =~ /\._/
-    base, rest = split_path(path)
+    parts = scan_path(path)
     begin
-      if rest.nil?
-        directory?(base)
-      else
-        contents("/#{base}").include?(rest)
-      end
-    rescue Exception => e
-      return false
-    end
-  end
-  
-  def size(path)
-    return false if path =~ /\._/
-    base, rest = split_path(path)
-    if rest == FOXML_XML
-      read_file(path).length
-    else
-      dsid = dsid_from_filename(rest)
-      ds_properties(base, dsid)['dssize'].to_i
+      Time.parse(ds_properties(parts[-2], parts[-1])['dscreatedate'])
+    rescue
+      Time.now
     end
   end
   
   def read_file(path)
     return '' if path =~ /\._/
-    base, rest = split_path(path)
-    if rest == FOXML_XML
-      @repo["objects/#{base}/export"].get
+    parts = scan_path(path)
+    pid, fname = parts[-2..-1]
+    if parts.last == FOXML_XML
+      @repo["objects/#{pid}/export"].get
     else
-      dsid = dsid_from_filename(rest)
-      @repo["objects/#{base}/datastreams/#{dsid}/content"].get
+      dsid = dsid_from_filename(fname)
+      @repo["objects/#{pid}/datastreams/#{dsid}/content"].get
     end
   end
   
   def can_write?(path)
     return true if path =~ /\._/ # We'll fake it out in #write_to()
-    base, rest = split_path(path)
-    file?(path) and (rest != FOXML_XML)
+    parts = scan_path(path)
+    file?(path) and (parts.last != FOXML_XML)
   end
   
   def write_to(path,content)
     return content if path =~ /\._/
     begin
-      base, rest = split_path(path)
-      dsid = dsid_from_filename(rest)
-      mime = ds_properties(base,dsid)['dsmime'] || 'application/octet-stream'
-      resource = @repo["objects/#{base}/datastreams/#{dsid}?logMessage=Fedora+FUSE+FS"]
+      parts = scan_path(path)
+      pid, fname = parts[-2..-1]
+      dsid = dsid_from_filename(fname)
+      mime = ds_properties(pid,dsid)['dsmime'] || 'application/octet-stream'
+      resource = @repo["objects/#{pid}/datastreams/#{dsid}?logMessage=Fedora+FUSE+FS"]
       resource.put(content, :content_type => mime)
       return true
     rescue Exception => e
@@ -166,7 +187,24 @@ class FedoraFS < FuseFS::FuseDir
     return true # We're never actually going to delete anything, though.
   end
 
-#  private
+  private
+  def traverse(parts)
+    dir_part = parts.shift
+    current_dir = pid_tree[dir_part]
+    if current_dir.nil?
+      raise PathError, "Path not found: #{File.join(*parts)}"
+    end
+    until parts.empty? or current_dir.nil?
+      dir_part = parts.shift
+      if current_dir.has_key?(dir_part)
+        current_dir = current_dir[dir_part]
+      else
+        raise PathError, "Path not found: #{File.join(*parts)}"
+      end
+    end
+    return([current_dir, dir_part, parts])
+  end
+
   def datastreams(pid)
     return [] unless pid =~ /^[^\.].+:.+$/
     obj = cache(pid)
@@ -193,61 +231,58 @@ class FedoraFS < FuseFS::FuseDir
     File.basename(filename,File.extname(filename))
   end
   
-  def gather_all_pids
-    if @solr.nil?
-      return []
-    else
-      begin
-        @pids = []
-        params = { :q => '*:*', :rows => 1000, :start => 0, :wt => 'json', :fl => 'PID' }
-        response = JSON.parse(@solr['select'].post(params))['response']
-        total = response['numFound']
-        docs = response['docs']
-        while params[:start] < total
-          @pids += docs.collect { |doc| doc['PID'].first }
-          params[:start] += 1000
-          docs = JSON.parse(@solr['select'].post(params))['response']['docs']
-        end
-        return @pids
-  #    rescue
-  #      return []
+  def build_pid_tree
+    @pids = {}
+    params = RISEARCH_CONTENTS_PARAMS.merge(:query => RISEARCH_CONTENTS_TEMPLATE)
+    response = @repo['risearch'].post(params)
+    pids = response.split(/\n/).collect { |pid| pid.sub(%r{^info:fedora/},'') }
+    pids.shift
+    pids.each do |pid|
+      namespace, id = pid.split(/:/,2)
+      splitter = @splitters[namespace] || @splitters[:default]
+      stem = @pids[namespace] ||= {}
+      pidtree = id.scan(splitter).flatten
+      until pidtree.empty?
+        stem = stem[pidtree.shift] ||= {}
       end
+      stem[pid] = nil
     end
+    @pids
   end
-  
+
+  def pid_tree
+    build_pid_tree if @pids.nil?
+    @pids
+  end
 end
   
 if (File.basename($0) == File.basename(__FILE__))
   
   url = nil
-  init_opts = { :ssl_client_cert => nil, :ssl_client_key => nil, :key_pass => '', :solr => nil }
+  init_opts = { :ssl_client_cert => nil, :ssl_client_key => nil, :key_file => nil, :key_pass => '' }
   volume_name = 'Fedora'
   
   optparse = OptionParser.new do |opts|
     opts.banner = "Usage: #{File.basename($0)} [options] <fedora-url> <mount-point>"
     
     opts.on('-c', '--cert-file FILE', "Use client certificate from FILE") do |filename|
-      init_opts[:ssl_client_cert] = filename
+      init_opts[:ssl_client_cert] = OpenSSL::X509::Certificate.new(File.read(filename))
     end
 
-    opts.on('-z', '--cache-size', "Number of objects to hold in memory") do |size|
-      init_opts[:cache_size] = size.to_i
-    end
-    
     opts.on('-k', '--key-file FILE', "Use client key from FILE") do |filename|
-      init_opts[:ssl_client_key] = filename
+      init_opts[:key_file] = filename
     end
     
     opts.on('-p', '--key-pass STRING', "Password for client key") do |val|
       init_opts[:key_pass] = val
     end
     
-    opts.on('-s', '--solr URI', "Base URI of Fedora solr server") do |uri|
-      init_opts[:solr] = uri
-    end
-    
     opts.on('-v', '--volname NAME', "Mount the volume as NAME") do |val|
       volume_name = val
+    end
+    
+    opts.on('-z', '--cache-size', "Number of objects to hold in memory") do |size|
+      init_opts[:cache_size] = size.to_i
     end
     
     opts.on_tail('-h', '--help', "Show this help message") do
@@ -258,6 +293,10 @@ if (File.basename($0) == File.basename(__FILE__))
 
   optparse.parse!
 
+  if init_opts[:key_file]
+    init_opts[:ssl_client_key] = OpenSSL::PKey::RSA.new(File.read(init_opts.delete(:key_file)), init_opts.delete(:key_pass))
+  end
+  
   if (ARGV.size != 2)
     puts optparse
     exit
@@ -272,11 +311,6 @@ if (File.basename($0) == File.basename(__FILE__))
     else
       FileUtils.mkdir_p(dirname)
     end
-  end
-
-  if uri =~ %r{^(.+)/fedora$} and init_opts[:solr].nil?
-    init_opts[:solr] = uri.sub(/fedora$/,'solr')
-    $stderr.puts "Default solr: #{init_opts[:solr]}"
   end
 
   root = FedoraFS.new(uri, init_opts)
