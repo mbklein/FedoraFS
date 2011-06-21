@@ -18,6 +18,7 @@ RISEARCH_DIRECTORY_PARAMS = { :type => 'triples', :lang => 'spo', :format => 'co
 RISEARCH_DIRECTORY_TEMPLATE = "<info:fedora/%1$s> <dc:identifier> '%1$s'"
 RISEARCH_CONTENTS_PARAMS = { :type => 'tuples', :lang => 'itql', :format => 'CSV' }
 RISEARCH_CONTENTS_TEMPLATE = "select $object from <#ri> where $object <info:fedora/fedora-system:def/model#label> $label"
+DEFAULT_SPLITTERS = { :default => /.+/, 'fedora-system' => /.+/, 'druid' => /([a-z]{2})([0-9]{3})([a-z]{2})([0-9]{4})/ }
 
 class FedoraFS < FuseFS::FuseDir
   class PathError < Exception; end
@@ -30,11 +31,18 @@ class FedoraFS < FuseFS::FuseDir
 #    result
 #  end
   
-  def initialize(fedora_url, opts = {})
+  def initialize(opts = {})
+    if opts[:cert_file]
+      opts[:ssl_client_cert] = OpenSSL::X509::Certificate.new(File.read(opts.delete(:cert_file)))
+    end
+    if opts[:key_file]
+      opts[:ssl_client_key] = OpenSSL::PKey::RSA.new(File.read(opts.delete(:key_file)), opts.delete(:key_pass))
+    end
+    
     @cache = LruHash.new(opts.delete(:cache_size) || 1000)
     @pids = []
-    @repo = RestClient::Resource.new(fedora_url, opts)
-    @splitters = { :default => /.+/, 'fedora-system' => /.+/, 'druid' => /([a-z]{2})([0-9]{3})([a-z]{2})([0-9]{4})/ }
+    @repo = RestClient::Resource.new(opts.delete(:url), opts)
+    @splitters = DEFAULT_SPLITTERS.merge(opts.delete(:splitters) || {})
   end
   
   def cache(pid)
@@ -254,69 +262,4 @@ class FedoraFS < FuseFS::FuseDir
     build_pid_tree if @pids.nil?
     @pids
   end
-end
-  
-if (File.basename($0) == File.basename(__FILE__))
-  
-  url = nil
-  init_opts = { :ssl_client_cert => nil, :ssl_client_key => nil, :key_file => nil, :key_pass => '' }
-  volume_name = 'Fedora'
-  
-  optparse = OptionParser.new do |opts|
-    opts.banner = "Usage: #{File.basename($0)} [options] <fedora-url> <mount-point>"
-    
-    opts.on('-c', '--cert-file FILE', "Use client certificate from FILE") do |filename|
-      init_opts[:ssl_client_cert] = OpenSSL::X509::Certificate.new(File.read(filename))
-    end
-
-    opts.on('-k', '--key-file FILE', "Use client key from FILE") do |filename|
-      init_opts[:key_file] = filename
-    end
-    
-    opts.on('-p', '--key-pass STRING', "Password for client key") do |val|
-      init_opts[:key_pass] = val
-    end
-    
-    opts.on('-v', '--volname NAME', "Mount the volume as NAME") do |val|
-      volume_name = val
-    end
-    
-    opts.on('-z', '--cache-size', "Number of objects to hold in memory") do |size|
-      init_opts[:cache_size] = size.to_i
-    end
-    
-    opts.on_tail('-h', '--help', "Show this help message") do
-      puts opts
-      exit
-    end
-  end
-
-  optparse.parse!
-
-  if init_opts[:key_file]
-    init_opts[:ssl_client_key] = OpenSSL::PKey::RSA.new(File.read(init_opts.delete(:key_file)), init_opts.delete(:key_pass))
-  end
-  
-  if (ARGV.size != 2)
-    puts optparse
-    exit
-  end
-  
-  uri = ARGV.shift
-  dirname = ARGV.shift
-  unless File.directory?(dirname)
-    if File.exists?(dirname)
-      puts "Usage: #{dirname} is not a directory."
-      exit
-    else
-      FileUtils.mkdir_p(dirname)
-    end
-  end
-
-  root = FedoraFS.new(uri, init_opts)
-
-  # Set the root FuseFS
-  FuseFS.set_root(root)
-  FuseFS.mount_under(dirname, 'noappledouble', 'noapplexattr', 'nolocalcaches', %{volname=#{volume_name}})
-  FuseFS.run # This doesn't return until we're unmounted.
 end

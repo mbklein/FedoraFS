@@ -1,0 +1,90 @@
+#!/usr/bin/env ruby
+require 'fedorafs'
+require 'yaml'
+
+init_opts = { 
+  :url => nil,
+  :user => nil,
+  :password => nil, 
+  :mount_point => nil,
+  :ssl_client_cert => nil, 
+  :ssl_client_key => nil, 
+  :key_file => nil, 
+  :key_pass => '', 
+  :vol_name => 'Fedora'
+}
+
+optparse = OptionParser.new do |opts|
+  opts.banner = "Usage: #{File.basename($0)} [options] <fedora-url> <mount-point>"
+ 
+  opts.on_head('-F', '--config-file FILE', "Load defaults from FILE") do |filename|
+    stored_opts = YAML.load(File.read(filename))
+    init_opts.merge!(stored_opts)
+  end
+  
+  opts.on('-c', '--cert-file FILE', "Use client certificate from FILE") do |filename|
+    init_opts[:cert_file] = File.expand_path(filename)
+  end
+
+  opts.on('-f', '--fedora-url URL', "Use Fedora instance at URL") do |val|
+    init_opts[:url] = val
+  end
+
+  opts.on('-k', '--key-file FILE', "Use client key from FILE") do |filename|
+    init_opts[:key_file] = File.expand_path(filename)
+  end
+
+  opts.on('-m', '--mount-point DIR', "Mount filesystem on DIR") do |val|
+    init_opts[:mount_point] = val
+  end
+  
+  opts.on('-p', '--key-pass STRING', "Password for client key") do |val|
+    init_opts[:key_pass] = val
+  end
+
+  opts.on('-u', '--user USER', "Authenticate to Fedora as USER") do |val|
+    init_opts[:user] = val
+  end
+  
+  opts.on('-v', '--volname NAME', "Mount the volume as NAME") do |val|
+    init_opts[:vol_name] = val
+  end
+
+  opts.on('-w', '--password PASS', "Authenticate to Fedora using PASS") do |val|
+    init_opts[:password] = val
+  end
+  
+  opts.on('-z', '--cache-size', "Number of objects to hold in memory") do |size|
+    init_opts[:cache_size] = size.to_i
+  end
+  
+  opts.on_tail('-s', '--save FILE', "Save options to FILE") do |filename|
+    File.open(filename, 'w') { |f| YAML.dump(init_opts, f) }
+  end
+  
+  opts.on_tail('-h', '--help', "Show this help message") do
+    puts opts
+    exit
+  end
+end
+
+optparse.parse!
+
+dirname = init_opts.delete(:mount_point)
+volume_name = init_opts.delete(:vol_name)
+
+unless File.directory?(dirname)
+  if File.exists?(dirname)
+    puts "Usage: #{dirname} is not a directory."
+    exit
+  else
+    FileUtils.mkdir_p(dirname)
+  end
+end
+
+root = FedoraFS.new(init_opts)
+
+# Set the root FuseFS
+FuseFS.set_root(root)
+FuseFS.mount_under(dirname, 'noappledouble', 'noapplexattr', 'nolocalcaches', %{volname=#{volume_name}})
+FuseFS.run # This doesn't return until we're unmounted.
