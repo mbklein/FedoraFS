@@ -18,7 +18,7 @@ RISEARCH_DIRECTORY_PARAMS = { :type => 'triples', :lang => 'spo', :format => 'co
 RISEARCH_DIRECTORY_TEMPLATE = "<info:fedora/%1$s> <dc:identifier> '%1$s'"
 RISEARCH_CONTENTS_PARAMS = { :type => 'tuples', :lang => 'itql', :format => 'CSV' }
 RISEARCH_CONTENTS_TEMPLATE = "select $object from <#ri> where $object <info:fedora/fedora-system:def/model#label> $label"
-DEFAULT_SPLITTERS = { :default => /.+/, 'fedora-system' => /.+/, 'druid' => /([a-z]{2})([0-9]{3})([a-z]{2})([0-9]{4})/ }
+DEFAULT_SPLITTERS = { :default => /.+/, 'fedora-system' => /.+/ }
 
 class FedoraFS < FuseFS::FuseDir
   class PathError < Exception; end
