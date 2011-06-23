@@ -1,5 +1,6 @@
 source :rubygems
 
+gem 'daemons'
 gem 'fusefs-osx'
 gem 'json_pure'
 gem 'nokogiri'

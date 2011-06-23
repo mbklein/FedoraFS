@@ -36,7 +36,8 @@ class FedoraFS < FuseFS::FuseDir
 #    result
 #  end
   
-  def initialize(opts = {})
+  def initialize(init_opts = {})
+    opts = Marshal::load(Marshal::dump(init_opts)) # deep copy
     if opts[:cert_file]
       opts[:ssl_client_cert] = OpenSSL::X509::Certificate.new(File.read(opts.delete(:cert_file)))
     end

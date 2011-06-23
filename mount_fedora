@@ -1,7 +1,9 @@
 #!/usr/bin/env ruby
 require 'fedorafs'
+require 'daemons'
 require 'yaml'
 
+daemonize = true
 init_opts = { 
   :url => nil,
   :user => nil,
@@ -26,6 +28,10 @@ optparse = OptionParser.new do |opts|
     init_opts[:cert_file] = File.expand_path(filename)
   end
 
+  opts.on('-D', '--no-daemon', "Run in the foreground (for debugging)") do
+    daemonize = false
+  end
+  
   opts.on('-f', '--fedora-url URL', "Use Fedora instance at URL") do |val|
     init_opts[:url] = val
   end
@@ -74,21 +80,33 @@ end
 
 optparse.parse!
 
-dirname = init_opts.delete(:mount_point)
-volume_name = init_opts.delete(:vol_name)
+def setup(init_opts)
+  dirname = init_opts.delete(:mount_point)
+  volume_name = init_opts.delete(:vol_name)
 
-unless File.directory?(dirname)
-  if File.exists?(dirname)
-    puts "Usage: #{dirname} is not a directory."
-    exit
-  else
-    FileUtils.mkdir_p(dirname)
+  unless File.directory?(dirname)
+    if File.exists?(dirname)
+      puts "Usage: #{dirname} is not a directory."
+      exit
+    else
+      FileUtils.mkdir_p(dirname)
+    end
   end
+
+  root = FedoraFS.new(init_opts)
+  root.logger.info("Mounting #{init_opts[:url]} as #{volume_name} on #{dirname}")
+  # Set the root FuseFS
+  FuseFS.set_root(root)
+  FuseFS.mount_under(dirname, 'noappledouble', 'noapplexattr', 'nolocalcaches', %{volname=#{volume_name}})
+  return root
 end
 
-root = FedoraFS.new(init_opts)
-
-# Set the root FuseFS
-FuseFS.set_root(root)
-FuseFS.mount_under(dirname, 'noappledouble', 'noapplexattr', 'nolocalcaches', %{volname=#{volume_name}})
-FuseFS.run # This doesn't return until we're unmounted.
+if daemonize
+  Daemons.call do
+    setup(init_opts)
+    loop { FuseFS.run }
+  end
+else
+  root = setup(init_opts)
+  FuseFS.run # This doesn't return until we're unmounted.
+end 
