@@ -22,6 +22,7 @@ RISEARCH_CONTENTS_TEMPLATE = "select $object from <#ri> where $object <info:fedo
 DEFAULT_CACHE = 1000
 DEFAULT_REFRESH = 120
 DEFAULT_SPLITTERS = { :default => /.+/, 'fedora-system' => /.+/ }
+ATTRIBUTE_FILES = [".refresh_time", ".last_refresh", ".next_refresh"]
 
 class FedoraFS < FuseFS::FuseDir
   class PathError < Exception; end
@@ -89,6 +90,7 @@ class FedoraFS < FuseFS::FuseDir
 
   def directory?(path)
     return false if path =~ /\._/
+    return false if is_attribute_file?(path)
     parts = scan_path(path)
     return true if parts.empty?
     current_dir, dir_part, parts, pid = begin
@@ -105,6 +107,7 @@ class FedoraFS < FuseFS::FuseDir
   
   def file?(path)
     return false if path =~ /\._/
+    return true if is_attribute_file?(path)
     parts = scan_path(path)
     current_dir, dir_part, parts, pid = begin
       traverse(parts)
@@ -120,20 +123,24 @@ class FedoraFS < FuseFS::FuseDir
   
   def size(path)
     return false if path =~ /\._/
-    parts = scan_path(path)
-    current_dir, dir_part, parts, pid = begin
-      traverse(parts)
-    rescue PathError
-      return false
-    end
-
-    if parts.last == FOXML_XML
-      read_file(path).length
-    elsif parts.last =~ /#{PROPERTIES_XML}$/
-      1024
+    if is_attribute_file?(path)
+      return read_file(path).length
     else
-      dsid = dsid_from_filename(parts.last)
-      ds_properties(pid, dsid)['dssize'].to_i
+      parts = scan_path(path)
+      current_dir, dir_part, parts, pid = begin
+        traverse(parts)
+      rescue PathError
+        return false
+      end
+
+      if parts.last == FOXML_XML
+        read_file(path).length
+      elsif parts.last =~ /#{PROPERTIES_XML}$/
+        read_file(path).length
+      else
+        dsid = dsid_from_filename(parts.last)
+        ds_properties(pid, dsid)['dssize'].to_i
+      end
     end
   end
   
@@ -162,30 +169,41 @@ class FedoraFS < FuseFS::FuseDir
   
   def read_file(path)
     return '' if path =~ /\._/
-    parts = scan_path(path)
-    current_dir, dir_part, parts, pid = traverse(parts)
-    fname = parts.last
-    if fname == FOXML_XML
-      @repo["objects/#{pid}/export"].get
-    elsif fname == PROPERTIES_XML
-      @repo["objects/#{pid}?format=xml"].get
-    elsif fname =~ /^(.+)\.#{PROPERTIES_XML}$/
-      dsid = $1
-      @repo["objects/#{pid}/datastreams/#{dsid}.xml"].get
+    if is_attribute_file?(path)
+      begin
+        accessor = path[2..-1].to_sym
+        content = self.send(accessor)
+        return "#{content.to_s}\n"
+      rescue Exception => e
+        $stderr.puts e, e.backtrace
+      end
     else
-      dsid = dsid_from_filename(fname)
-      @repo["objects/#{pid}/datastreams/#{dsid}/content"].get
+      parts = scan_path(path)
+      current_dir, dir_part, parts, pid = traverse(parts)
+      fname = parts.last
+      if fname == FOXML_XML
+        @repo["objects/#{pid}/export"].get
+      elsif fname == PROPERTIES_XML
+        @repo["objects/#{pid}?format=xml"].get
+      elsif fname =~ /^(.+)\.#{PROPERTIES_XML}$/
+        dsid = $1
+        @repo["objects/#{pid}/datastreams/#{dsid}.xml"].get
+      else
+        dsid = dsid_from_filename(fname)
+        @repo["objects/#{pid}/datastreams/#{dsid}/content"].get
+      end
     end
   end
   
   def can_write?(path)
     return true if path =~ /\._/ # We'll fake it out in #write_to()
+    return false if is_attribute_file?(path)
     parts = scan_path(path)
     file?(path) and (parts.last != FOXML_XML) and (parts.last !~ /#{PROPERTIES_XML}$/)
   end
   
   def write_to(path,content)
-    return content if path =~ /\._/
+    return content if (path =~ /\._/) or (path =~ /#{FOXML_XML}$/) or (path =~ /#{PROPERTIES_XML}$/)
     begin
       parts = scan_path(path)
       current_dir, dir_part, parts, pid = traverse(parts)
@@ -217,6 +235,10 @@ class FedoraFS < FuseFS::FuseDir
   end
   
   private
+  def is_attribute_file?(path)
+    File.dirname(path) == '/' and ATTRIBUTE_FILES.include?(File.basename(path))
+  end
+  
   def traverse(parts)
     dir_part = parts.shift
     pid = "#{dir_part}:"
