@@ -1,0 +1,11 @@
+--- 
+:url: https://example.edu/fedora
+:cert_file: /path/to/ssl.crt
+:key_file: /path/to/ssl.key
+:key_pass: "ssl_key_password"
+:user: fedoraAdmin
+:password: fedoraAdmin
+:splitters: 
+  druid: /([a-z]{2})([0-9]{3})([a-z]{2})([0-9]{4})/
+:vol_name: fedora
+:mount_point: /Volumes/fedora

@@ -52,6 +52,11 @@ class FedoraFS < FuseFS::FuseDir
     @pids = nil
     @repo = RestClient::Resource.new(opts.delete(:url), opts)
     @splitters = DEFAULT_SPLITTERS.merge(opts.delete(:splitters) || {})
+    @splitters.each_pair do |k,v| 
+      if v.is_a?(String)
+        @splitters[k] = Regexp.compile(v.gsub(/^\/|\/$/,''))
+      end
+    end
   end
   
   def cache(pid)
