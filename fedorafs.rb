@@ -19,12 +19,20 @@ RISEARCH_DIRECTORY_PARAMS = { :type => 'triples', :lang => 'spo', :format => 'co
 RISEARCH_DIRECTORY_TEMPLATE = "<info:fedora/%1$s> <dc:identifier> '%1$s'"
 RISEARCH_CONTENTS_PARAMS = { :type => 'tuples', :lang => 'itql', :format => 'CSV' }
 RISEARCH_CONTENTS_TEMPLATE = "select $object from <#ri> where $object <info:fedora/fedora-system:def/model#label> $label"
+DEFAULT_CACHE = 1000
+DEFAULT_REFRESH = 120
 DEFAULT_SPLITTERS = { :default => /.+/, 'fedora-system' => /.+/ }
 
 class FedoraFS < FuseFS::FuseDir
   class PathError < Exception; end
   
-  attr_reader :repo, :splitters
+  attr_reader :repo, :splitters, :refresh_time, :last_refresh
+  
+#  def respond_to?(sym)
+#    result = super(sym)
+#    $stderr.puts "respond_to?(#{sym.inspect}) :: #{result}"
+#    result
+#  end
   
   def initialize(opts = {})
     if opts[:cert_file]
@@ -34,8 +42,10 @@ class FedoraFS < FuseFS::FuseDir
       opts[:ssl_client_key] = OpenSSL::PKey::RSA.new(File.read(opts.delete(:key_file)), opts.delete(:key_pass))
     end
     
-    @cache = LruHash.new(opts.delete(:cache_size) || 1000)
-    @pids = []
+    @refresh_time = opts.delete(:refresh_time) || DEFAULT_REFRESH
+    @last_refresh = nil
+    @cache = LruHash.new(opts.delete(:cache_size) || DEFAULT_CACHE)
+    @pids = nil
     @repo = RestClient::Resource.new(opts.delete(:url), opts)
     @splitters = DEFAULT_SPLITTERS.merge(opts.delete(:splitters) || {})
   end
@@ -50,7 +60,7 @@ class FedoraFS < FuseFS::FuseDir
   def contents(path)
     parts = scan_path(path)
     if parts.empty?
-      return build_pid_tree.keys
+      return pid_tree.keys
     else
       current_dir, dir_part, parts, pid = traverse(parts)
       if current_dir.nil?
@@ -202,6 +212,10 @@ class FedoraFS < FuseFS::FuseDir
     return true # We're never actually going to delete anything, though.
   end
 
+  def next_refresh
+    @last_refresh.nil? ? Time.now : (@last_refresh + @refresh_time)
+  end
+  
   private
   def traverse(parts)
     dir_part = parts.shift
@@ -248,27 +262,25 @@ class FedoraFS < FuseFS::FuseDir
     File.basename(filename,File.extname(filename))
   end
   
-  def build_pid_tree
-    @pids = {}
-    params = RISEARCH_CONTENTS_PARAMS.merge(:query => RISEARCH_CONTENTS_TEMPLATE)
-    response = @repo['risearch'].post(params)
-    pids = response.split(/\n/).collect { |pid| pid.sub(%r{^info:fedora/},'') }
-    pids.shift
-    pids.each do |pid|
-      namespace, id = pid.split(/:/,2)
-      splitter = @splitters[namespace] || @splitters[:default]
-      stem = @pids[namespace] ||= {}
-      pidtree = id.scan(splitter).flatten
-      until pidtree.empty?
-        pid_part = pidtree.shift
-        stem = stem[pid_part] ||= pidtree.empty? ? nil : {}
-      end
-    end
-    @pids
-  end
-
   def pid_tree
-    build_pid_tree if @pids.nil?
+    if @pids.nil? or (Time.now >= next_refresh)
+      @pids = {}
+      params = RISEARCH_CONTENTS_PARAMS.merge(:query => RISEARCH_CONTENTS_TEMPLATE)
+      response = @repo['risearch'].post(params)
+      pids = response.split(/\n/).collect { |pid| pid.sub(%r{^info:fedora/},'') }
+      pids.shift
+      pids.each do |pid|
+        namespace, id = pid.split(/:/,2)
+        splitter = @splitters[namespace] || @splitters[:default]
+        stem = @pids[namespace] ||= {}
+        pidtree = id.scan(splitter).flatten
+        until pidtree.empty?
+          pid_part = pidtree.shift
+          stem = stem[pid_part] ||= pidtree.empty? ? nil : {}
+        end
+      end
+      @last_refresh = Time.now
+    end
     @pids
   end
 end

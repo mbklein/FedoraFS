@@ -42,6 +42,10 @@ optparse = OptionParser.new do |opts|
     init_opts[:key_pass] = val
   end
 
+  opts.on('-r', '--refresh SECONDS', "Refresh directory structure every SECONDS seconds") do |val|
+    init_opts[:refresh_time] = val
+  end
+
   opts.on('-u', '--user USER', "Authenticate to Fedora as USER") do |val|
     init_opts[:user] = val
   end
