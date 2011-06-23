@@ -14,6 +14,7 @@ require 'mime/types'
 include FuseFS
 
 FOXML_XML = 'foxml.xml'
+PROPERTIES_XML = 'profile.xml'
 RISEARCH_DIRECTORY_PARAMS = { :type => 'triples', :lang => 'spo', :format => 'count' }
 RISEARCH_DIRECTORY_TEMPLATE = "<info:fedora/%1$s> <dc:identifier> '%1$s'"
 RISEARCH_CONTENTS_PARAMS = { :type => 'tuples', :lang => 'itql', :format => 'CSV' }
@@ -24,12 +25,6 @@ class FedoraFS < FuseFS::FuseDir
   class PathError < Exception; end
   
   attr_reader :repo, :splitters
-  
-#  def respond_to?(sym)
-#    result = super
-#    $stderr.puts("respond_to? #{sym.inspect} :: #{result}")
-#    result
-#  end
   
   def initialize(opts = {})
     if opts[:cert_file]
@@ -57,15 +52,17 @@ class FedoraFS < FuseFS::FuseDir
     if parts.empty?
       return build_pid_tree.keys
     else
-      current_dir, dir_part, parts = traverse(parts)
+      current_dir, dir_part, parts, pid = traverse(parts)
       if current_dir.nil?
-        files = begin
-          [FOXML_XML] + datastreams(dir_part).collect do |ds|
-            mime = MIME::Types[ds_properties(dir_part,ds)['dsmime']].first
-            mime.nil? ? ds : "#{ds}.#{mime.extensions.first}"
+        files = [FOXML_XML, PROPERTIES_XML]
+        begin
+          datastreams(pid).each do |ds|
+            mime = MIME::Types[ds_properties(pid,ds)['dsmime']].first
+            files << (mime.nil? ? ds : "#{ds}.#{mime.extensions.first}")
+            files << "#{ds}.#{PROPERTIES_XML}"
           end
         rescue Exception => e
-          puts e.inspect
+          puts e.inspect, e.backtrace
           []
         end
         if parts.empty?
@@ -84,7 +81,7 @@ class FedoraFS < FuseFS::FuseDir
     return false if path =~ /\._/
     parts = scan_path(path)
     return true if parts.empty?
-    current_dir, dir_part, parts = begin
+    current_dir, dir_part, parts, pid = begin
       traverse(parts)
     rescue PathError
       return false
@@ -99,7 +96,7 @@ class FedoraFS < FuseFS::FuseDir
   def file?(path)
     return false if path =~ /\._/
     parts = scan_path(path)
-    current_dir, dir_part, parts = begin
+    current_dir, dir_part, parts, pid = begin
       traverse(parts)
     rescue PathError
       return false
@@ -114,7 +111,7 @@ class FedoraFS < FuseFS::FuseDir
   def size(path)
     return false if path =~ /\._/
     parts = scan_path(path)
-    current_dir, dir_part, parts = begin
+    current_dir, dir_part, parts, pid = begin
       traverse(parts)
     rescue PathError
       return false
@@ -122,9 +119,11 @@ class FedoraFS < FuseFS::FuseDir
 
     if parts.last == FOXML_XML
       read_file(path).length
+    elsif parts.last =~ /#{PROPERTIES_XML}$/
+      1024
     else
       dsid = dsid_from_filename(parts.last)
-      ds_properties(dir_part, dsid)['dssize'].to_i
+      ds_properties(pid, dsid)['dssize'].to_i
     end
   end
   
@@ -143,8 +142,9 @@ class FedoraFS < FuseFS::FuseDir
   
   def utime(path)
     parts = scan_path(path)
+    current_dir, dir_part, parts, pid = traverse(parts)
     begin
-      Time.parse(ds_properties(parts[-2], parts[-1])['dscreatedate'])
+      Time.parse(ds_properties(pid, parts[-1])['dscreatedate'])
     rescue
       Time.now
     end
@@ -153,9 +153,15 @@ class FedoraFS < FuseFS::FuseDir
   def read_file(path)
     return '' if path =~ /\._/
     parts = scan_path(path)
-    pid, fname = parts[-2..-1]
-    if parts.last == FOXML_XML
+    current_dir, dir_part, parts, pid = traverse(parts)
+    fname = parts.last
+    if fname == FOXML_XML
       @repo["objects/#{pid}/export"].get
+    elsif fname == PROPERTIES_XML
+      @repo["objects/#{pid}?format=xml"].get
+    elsif fname =~ /^(.+)\.#{PROPERTIES_XML}$/
+      dsid = $1
+      @repo["objects/#{pid}/datastreams/#{dsid}.xml"].get
     else
       dsid = dsid_from_filename(fname)
       @repo["objects/#{pid}/datastreams/#{dsid}/content"].get
@@ -165,14 +171,15 @@ class FedoraFS < FuseFS::FuseDir
   def can_write?(path)
     return true if path =~ /\._/ # We'll fake it out in #write_to()
     parts = scan_path(path)
-    file?(path) and (parts.last != FOXML_XML)
+    file?(path) and (parts.last != FOXML_XML) and (parts.last !~ /#{PROPERTIES_XML}$/)
   end
   
   def write_to(path,content)
     return content if path =~ /\._/
     begin
       parts = scan_path(path)
-      pid, fname = parts[-2..-1]
+      current_dir, dir_part, parts, pid = traverse(parts)
+      fname = parts.last
       dsid = dsid_from_filename(fname)
       mime = ds_properties(pid,dsid)['dsmime'] || 'application/octet-stream'
       resource = @repo["objects/#{pid}/datastreams/#{dsid}?logMessage=Fedora+FUSE+FS"]
@@ -198,6 +205,7 @@ class FedoraFS < FuseFS::FuseDir
   private
   def traverse(parts)
     dir_part = parts.shift
+    pid = "#{dir_part}:"
     current_dir = pid_tree[dir_part]
     if current_dir.nil?
       raise PathError, "Path not found: #{File.join(*parts)}"
@@ -205,12 +213,13 @@ class FedoraFS < FuseFS::FuseDir
     until parts.empty? or current_dir.nil?
       dir_part = parts.shift
       if current_dir.has_key?(dir_part)
+        pid += dir_part
         current_dir = current_dir[dir_part]
       else
         raise PathError, "Path not found: #{File.join(*parts)}"
       end
     end
-    return([current_dir, dir_part, parts])
+    return([current_dir, dir_part, parts, pid])
   end
 
   def datastreams(pid)
@@ -251,9 +260,9 @@ class FedoraFS < FuseFS::FuseDir
       stem = @pids[namespace] ||= {}
       pidtree = id.scan(splitter).flatten
       until pidtree.empty?
-        stem = stem[pidtree.shift] ||= {}
+        pid_part = pidtree.shift
+        stem = stem[pid_part] ||= pidtree.empty? ? nil : {}
       end
-      stem[pid] = nil
     end
     @pids
   end
