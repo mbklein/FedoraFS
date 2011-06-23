@@ -5,6 +5,7 @@ require 'bundler/setup'
 require 'fileutils'
 require 'fusefs'
 require 'json'
+require 'logger'
 require 'nokogiri'
 require 'optparse'
 require 'rest-client'
@@ -22,12 +23,12 @@ RISEARCH_CONTENTS_TEMPLATE = "select $object from <#ri> where $object <info:fedo
 DEFAULT_CACHE = 1000
 DEFAULT_REFRESH = 120
 DEFAULT_SPLITTERS = { :default => /.+/, 'fedora-system' => /.+/ }
-ATTRIBUTE_FILES = [".refresh_time", ".last_refresh", ".next_refresh"]
+ATTRIBUTE_FILES = ["last_refresh", "next_refresh", "object_cache", "object_count", "refresh_time"]
 
 class FedoraFS < FuseFS::FuseDir
   class PathError < Exception; end
   
-  attr_reader :repo, :splitters, :refresh_time, :last_refresh
+  attr_reader :repo, :splitters, :refresh_time, :last_refresh, :logger
   
 #  def respond_to?(sym)
 #    result = super(sym)
@@ -43,6 +44,7 @@ class FedoraFS < FuseFS::FuseDir
       opts[:ssl_client_key] = OpenSSL::PKey::RSA.new(File.read(opts.delete(:key_file)), opts.delete(:key_pass))
     end
     
+    @logger = opts.delete(:logger) || Logger.new($stderr)
     @refresh_time = opts.delete(:refresh_time) || DEFAULT_REFRESH
     @last_refresh = nil
     @cache = LruHash.new(opts.delete(:cache_size) || DEFAULT_CACHE)
@@ -73,7 +75,7 @@ class FedoraFS < FuseFS::FuseDir
             files << "#{ds}.#{PROPERTIES_XML}"
           end
         rescue Exception => e
-          puts e.inspect, e.backtrace
+          log_exception(e)
           []
         end
         if parts.empty?
@@ -169,29 +171,29 @@ class FedoraFS < FuseFS::FuseDir
   
   def read_file(path)
     return '' if path =~ /\._/
-    if is_attribute_file?(path)
-      begin
-        accessor = path[2..-1].to_sym
+    begin
+      if is_attribute_file?(path)
+        accessor = File.basename(path,File.extname(path)).sub(/^\.+/,'').to_sym
         content = self.send(accessor)
         return "#{content.to_s}\n"
-      rescue Exception => e
-        $stderr.puts e, e.backtrace
-      end
-    else
-      parts = scan_path(path)
-      current_dir, dir_part, parts, pid = traverse(parts)
-      fname = parts.last
-      if fname == FOXML_XML
-        @repo["objects/#{pid}/export"].get
-      elsif fname == PROPERTIES_XML
-        @repo["objects/#{pid}?format=xml"].get
-      elsif fname =~ /^(.+)\.#{PROPERTIES_XML}$/
-        dsid = $1
-        @repo["objects/#{pid}/datastreams/#{dsid}.xml"].get
       else
-        dsid = dsid_from_filename(fname)
-        @repo["objects/#{pid}/datastreams/#{dsid}/content"].get
+        parts = scan_path(path)
+        current_dir, dir_part, parts, pid = traverse(parts)
+        fname = parts.last
+        if fname == FOXML_XML
+          @repo["objects/#{pid}/export"].get
+        elsif fname == PROPERTIES_XML
+          @repo["objects/#{pid}?format=xml"].get
+        elsif fname =~ /^(.+)\.#{PROPERTIES_XML}$/
+          dsid = $1
+          @repo["objects/#{pid}/datastreams/#{dsid}.xml"].get
+        else
+          dsid = dsid_from_filename(fname)
+          @repo["objects/#{pid}/datastreams/#{dsid}/content"].get
+        end
       end
+    rescue Exception => e
+      log_exception(e)
     end
   end
   
@@ -234,9 +236,24 @@ class FedoraFS < FuseFS::FuseDir
     @last_refresh.nil? ? Time.now : (@last_refresh + @refresh_time)
   end
   
+  def object_cache
+    @cache.to_json
+  end
+  
+  def object_count(hash = @pids)
+    result = 0
+    hash.each_pair { |k,v| result += v.nil? ? 1 : object_count(v) }
+    result
+  end
+  
   private
   def is_attribute_file?(path)
     File.dirname(path) == '/' and ATTRIBUTE_FILES.include?(File.basename(path))
+  end
+  
+  def log_exception(e)
+    @logger.error(e.message)
+    @logger.debug(e.backtrace)
   end
   
   def traverse(parts)
