@@ -107,12 +107,8 @@ def setup(init_opts)
   return root
 end
 
-if daemonize
-  Daemons.call do
-    setup(init_opts)
-    loop { FuseFS.run }
-  end
-else
-  root = setup(init_opts)
-  FuseFS.run # This doesn't return until we're unmounted.
-end 
+group = Daemons::ApplicationGroup.new("fedorafs:#{init_opts[:vol_name]}", :ontop => !daemonize)
+group.new_application(:mode => :proc, :proc => lambda {
+  setup(init_opts)
+  FuseFS.run
+}).start
