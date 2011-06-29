@@ -57,6 +57,7 @@ class FedoraFS < FuseFS::FuseDir
         @splitters[k] = Regexp.compile(v.gsub(/^\/|\/$/,''))
       end
     end
+    @list_profiles = opts.delete(:profile_xml) ? true : false
   end
   
   def cache(pid)
@@ -73,12 +74,13 @@ class FedoraFS < FuseFS::FuseDir
     else
       current_dir, dir_part, parts, pid = traverse(parts)
       if current_dir.nil?
-        files = [FOXML_XML, PROPERTIES_XML]
+        files = [FOXML_XML]
+        files << PROPERTIES_XML if @list_profiles
         begin
           datastreams(pid).each do |ds|
             mime = MIME::Types[ds_properties(pid,ds)['dsmime']].first
             files << (mime.nil? ? ds : "#{ds}.#{mime.extensions.first}")
-            files << "#{ds}.#{PROPERTIES_XML}"
+            files << "#{ds}.#{PROPERTIES_XML}" if @list_profiles
           end
         rescue Exception => e
           log_exception(e)
@@ -125,7 +127,9 @@ class FedoraFS < FuseFS::FuseDir
     if parts.empty?
       return true
     else
-      contents(File.dirname(path)).include?(parts.last)
+      file = parts.last
+      list = contents(File.dirname(path))
+      list.any? { |entry| entry == file or File.basename(entry,File.extname(entry))+'.'+PROPERTIES_XML == file }
     end
   end
   

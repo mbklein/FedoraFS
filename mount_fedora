@@ -9,6 +9,7 @@ init_opts = {
   :user => nil,
   :password => nil, 
   :mount_point => nil,
+  :profile_xml => false,
   :ssl_client_cert => nil, 
   :ssl_client_key => nil, 
   :key_file => nil, 
@@ -19,9 +20,13 @@ init_opts = {
 optparse = OptionParser.new do |opts|
   opts.banner = "Usage: #{File.basename($0)} [options] <fedora-url> <mount-point>"
  
-  opts.on_head('-F', '--config-file FILE', "Load defaults from FILE") do |filename|
+  opts.on_head('-C', '--config-file FILE', "Load defaults from FILE") do |filename|
     stored_opts = YAML.load(File.read(filename))
     init_opts.merge!(stored_opts)
+  end
+  
+  opts.on('-a', '--attribute-xml', "Include object/datastream attribute XML files","in directory listings") do
+    init_opts[:profile_xml] = true
   end
   
   opts.on('-c', '--cert-file FILE', "Use client certificate from FILE") do |filename|
@@ -76,6 +81,7 @@ optparse = OptionParser.new do |opts|
     puts opts
     exit
   end
+
 end
 
 optparse.parse!
