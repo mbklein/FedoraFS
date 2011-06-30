@@ -216,7 +216,7 @@ class FedoraFS < FuseFS::FuseDir
       return false
     else
       parts = scan_path(path)
-      return file?(path) and (parts.last != FOXML_XML) and (parts.last !~ /#{PROPERTIES_XML}$/)
+      return (file?(path) and (parts.last != FOXML_XML) and (parts.last !~ /#{PROPERTIES_XML}$/))
     end
   end
   
