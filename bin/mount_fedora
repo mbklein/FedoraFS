@@ -1,4 +1,10 @@
 #!/usr/bin/env ruby
+require 'rubygems'
+begin
+  require 'bundler/setup'
+rescue LoadError
+  # Try to run without bundler
+end
 require 'fedorafs'
 require 'daemons'
 require 'yaml'
