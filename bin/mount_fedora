@@ -6,6 +6,7 @@ rescue LoadError
   # Try to run without bundler
 end
 require 'fedorafs'
+require 'fusefs-patch'
 require 'daemons'
 require 'yaml'
 
