@@ -27,8 +27,9 @@ ATTRIBUTE_FILES = ["last_refresh", "next_refresh", "object_cache", "object_count
 
 class FedoraFS < FuseFS::FuseDir
   class PathError < Exception; end
-  
+    
   attr_reader :repo, :splitters, :refresh_time, :last_refresh, :logger
+  attr_accessor :read_only
   
 #  def respond_to?(sym)
 #    result = super(sym)
@@ -58,6 +59,7 @@ class FedoraFS < FuseFS::FuseDir
       end
     end
     @list_profiles = opts.delete(:profile_xml) ? true : false
+    @read_only = opts.delete(:read_only) ? true : false
   end
   
   def cache(pid)
@@ -208,14 +210,18 @@ class FedoraFS < FuseFS::FuseDir
   end
   
   def can_write?(path)
-    return true if path =~ /\._/ # We'll fake it out in #write_to()
-    return false if is_attribute_file?(path)
-    parts = scan_path(path)
-    file?(path) and (parts.last != FOXML_XML) and (parts.last !~ /#{PROPERTIES_XML}$/)
+    if path =~ /\._/ # We'll fake it out in #write_to()
+      return true
+    elsif read_only or is_attribute_file?(path)
+      return false
+    else
+      parts = scan_path(path)
+      return file?(path) and (parts.last != FOXML_XML) and (parts.last !~ /#{PROPERTIES_XML}$/)
+    end
   end
   
   def write_to(path,content)
-    return content if (path =~ /\._/) or (path =~ /#{FOXML_XML}$/) or (path =~ /#{PROPERTIES_XML}$/)
+    return content if read_only or (path =~ /\._/) or (path =~ /#{FOXML_XML}$/) or (path =~ /#{PROPERTIES_XML}$/)
     begin
       parts = scan_path(path)
       current_dir, dir_part, parts, pid = traverse(parts)
