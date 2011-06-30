@@ -14,6 +14,7 @@ init_opts = {
   :ssl_client_key => nil, 
   :key_file => nil, 
   :key_pass => '', 
+  :read_only => false,
   :vol_name => 'Fedora'
 }
 
@@ -53,6 +54,10 @@ optparse = OptionParser.new do |opts|
     init_opts[:key_pass] = val
   end
 
+  opts.on('-R', '--read-only', "Don't allow editing of datastream content") do
+    init_opts[:read_only] = true
+  end
+  
   opts.on('-r', '--refresh SECONDS', "Refresh directory structure every SECONDS seconds") do |val|
     init_opts[:refresh_time] = val
   end
