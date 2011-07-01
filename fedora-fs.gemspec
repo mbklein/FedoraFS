@@ -6,7 +6,7 @@ $:.unshift lib unless $:.include?(lib)
 
 Gem::Specification.new do |s|
   s.name        = "fedora-fs"
-  s.version     = '0.2.0'
+  s.version     = '0.3.0'
   s.platform    = Gem::Platform::RUBY
   s.authors     = ["Michael B. Klein"]
   s.email       = ["mbklein@stanford.edu"]

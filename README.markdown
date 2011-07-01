@@ -93,6 +93,10 @@ FedoraFS filesystem:
     attribute_xml.txt (rw) - Contains "true" if *.profile.xml files should be included in directory
                              listings; "false" if they should be hidden
 
+## History
+
+**0.3.0** - Initial documented release
+
 ## Copyright
 
 Copyright (c) 2011 Michael B. Klein. See LICENSE.txt for further details.
