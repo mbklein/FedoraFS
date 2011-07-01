@@ -24,13 +24,13 @@ DEFAULT_CACHE = 1000
 DEFAULT_REFRESH = 120
 DEFAULT_SPLITTERS = { :default => /.+/, 'fedora-system' => /.+/ }
 ATTRIBUTE_FILES = ["last_refresh", "next_refresh", "object_cache", "object_count"]
-SIGNAL_FILES = ["log_level", "read_only", "profile_xml", "refresh_time"]
+SIGNAL_FILES = ["log_level", "read_only", "attribute_xml", "refresh_time"]
 
 class FedoraFS < FuseFS::FuseDir
   class PathError < Exception; end
     
   attr_reader :repo, :splitters, :last_refresh, :logger
-  attr_accessor :read_only, :profile_xml, :refresh_time
+  attr_accessor :read_only, :attribute_xml, :refresh_time
   
 #  def respond_to?(sym)
 #    result = super(sym)
@@ -47,8 +47,8 @@ class FedoraFS < FuseFS::FuseDir
       opts[:ssl_client_key] = OpenSSL::PKey::RSA.new(File.read(opts.delete(:key_file)), opts.delete(:key_pass))
     end
     
-    @logger = opts.delete(:logger) || Logger.new($stderr)
-    @logger.level = opts.delete(:log_level) || @logger.level
+    @logdev = opts.delete(:log_file) || $stderr
+    @loglvl = opts.delete(:log_level) || Logger::INFO
     @refresh_time = opts.delete(:refresh_time) || DEFAULT_REFRESH
     @last_refresh = nil
     @cache = LruHash.new(opts.delete(:cache_size) || DEFAULT_CACHE)
@@ -60,8 +60,14 @@ class FedoraFS < FuseFS::FuseDir
         @splitters[k] = Regexp.compile(v.gsub(/^\/|\/$/,''))
       end
     end
-    @profile_xml = opts.delete(:profile_xml) ? true : false
+    @attribute_xml = opts.delete(:attribute_xml) ? true : false
     @read_only = opts.delete(:read_only) ? true : false
+  end
+  
+  def logger
+    @logger ||= Logger.new(@logdev)
+    @logger.level = @loglvl
+    @logger
   end
   
   def cache(pid)
@@ -79,12 +85,12 @@ class FedoraFS < FuseFS::FuseDir
       current_dir, dir_part, parts, pid = traverse(parts)
       if current_dir.nil?
         files = [FOXML_XML]
-        files << PROPERTIES_XML if @profile_xml
+        files << PROPERTIES_XML if @attribute_xml
         with_exception_logging([]) do
           datastreams(pid).each do |ds|
             mime = MIME::Types[ds_properties(pid,ds)['dsmime']].first
             files << (mime.nil? ? ds : "#{ds}.#{mime.extensions.first}")
-            files << "#{ds}.#{PROPERTIES_XML}" if @profile_xml
+            files << "#{ds}.#{PROPERTIES_XML}" if @attribute_xml
           end
         end
         if parts.empty?
@@ -228,7 +234,7 @@ class FedoraFS < FuseFS::FuseDir
       write_stack.delete(path)
       with_exception_logging do
         if is_signal_file?(path)
-          @logger.debug("Setting #{File.basename(path)} to #{content.chomp.inspect}")
+          logger.debug("Setting #{File.basename(path)} to #{content.chomp.inspect}")
           accessor = "#{File.basename(path)}=".to_sym
           self.send(accessor, content)
         else
@@ -274,19 +280,19 @@ class FedoraFS < FuseFS::FuseDir
   end
   
   def log_level
-    @logger.level
+    logger.level
   end
   
   def log_level=(value)
-    @logger.level = value
+    logger.level = @loglvl = value.to_i
   end
   
   def read_only=(value)
     @read_only = bool(value)
   end
   
-  def profile_xml=(value)
-    @profile_xml = bool(value)
+  def attribute_xml=(value)
+    @attribute_xml = bool(value)
   end
   
   def refresh_time=(value)
@@ -302,7 +308,6 @@ class FedoraFS < FuseFS::FuseDir
     end
   end
   
-  
   def is_attribute_file?(path)
     File.dirname(path) == '/' and ATTRIBUTE_FILES.include?(File.basename(path))
   end
@@ -315,8 +320,8 @@ class FedoraFS < FuseFS::FuseDir
     begin
       return yield
     rescue Exception => e
-      @logger.error(e.message)
-      @logger.debug(e.backtrace)
+      logger.error(e.message)
+      logger.debug(e.backtrace)
       return default
     end
   end

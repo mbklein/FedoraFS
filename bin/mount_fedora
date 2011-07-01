@@ -8,6 +8,7 @@ end
 require 'fedorafs'
 require 'fusefs-patch'
 require 'daemons'
+require 'logger'
 require 'yaml'
 
 daemonize = true
@@ -16,17 +17,18 @@ init_opts = {
   :user => nil,
   :password => nil, 
   :mount_point => nil,
-  :profile_xml => false,
+  :attribute_xml => false,
   :ssl_client_cert => nil, 
   :ssl_client_key => nil, 
   :key_file => nil, 
   :key_pass => '', 
+  :log_level => Logger::INFO,
   :read_only => false,
   :vol_name => 'Fedora'
 }
 
 optparse = OptionParser.new do |opts|
-  opts.banner = "Usage: #{File.basename($0)} [options] <fedora-url> <mount-point>"
+  opts.banner = "Usage: #{File.basename($0)} [options]"
  
   opts.on_head('-C', '--config-file FILE', "Load defaults from FILE") do |filename|
     stored_opts = YAML.load(File.read(filename))
@@ -34,7 +36,7 @@ optparse = OptionParser.new do |opts|
   end
   
   opts.on('-a', '--attribute-xml', "Include object/datastream attribute XML files","in directory listings") do
-    init_opts[:profile_xml] = true
+    init_opts[:attribute_xml] = true
   end
   
   opts.on('-c', '--cert-file FILE', "Use client certificate from FILE") do |filename|
@@ -53,6 +55,14 @@ optparse = OptionParser.new do |opts|
     init_opts[:key_file] = File.expand_path(filename)
   end
 
+  opts.on('--log-file FILE', "Send logging output to FILE") do |logfile|
+    init_opts[:log_file] = File.expand_path(logfile)
+  end
+  
+  opts.on('--log-level LEVEL', Integer, "Set the logging level (0-5; 0 = most verbose)") do |level|
+    init_opts[:log_level] = level.to_i
+  end
+  
   opts.on('-m', '--mount-point DIR', "Mount filesystem on DIR") do |val|
     init_opts[:mount_point] = val
   end
