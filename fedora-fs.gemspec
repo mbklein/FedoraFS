@@ -6,7 +6,7 @@ $:.unshift lib unless $:.include?(lib)
 
 Gem::Specification.new do |s|
   s.name        = "fedora-fs"
-  s.version     = '0.2.0'
+  s.version     = '0.3.0'
   s.platform    = Gem::Platform::RUBY
   s.authors     = ["Michael B. Klein"]
   s.email       = ["mbklein@stanford.edu"]
@@ -29,7 +29,9 @@ Gem::Specification.new do |s|
   s.add_development_dependency "rake", ">=0.8.7"
   s.add_development_dependency "rcov"
   s.add_development_dependency "rdoc"
-  s.add_development_dependency "rspec", "< 2.0" # We're not ready to upgrade to rspec 2
+  s.add_development_dependency "rspec"
+  s.add_development_dependency "fakeweb"
+  s.add_development_dependency "redcarpet"
   s.add_development_dependency "ruby-debug"
   s.add_development_dependency "yard"
  
