@@ -23,20 +23,21 @@ RISEARCH_CONTENTS_TEMPLATE = "select $object from <#ri> where $object <info:fedo
 DEFAULT_CACHE = 1000
 DEFAULT_REFRESH = 120
 DEFAULT_SPLITTERS = { :default => /.+/, 'fedora-system' => /.+/ }
-ATTRIBUTE_FILES = ["last_refresh", "next_refresh", "object_cache", "object_count", "refresh_time"]
+ATTRIBUTE_FILES = ["last_refresh", "next_refresh", "object_cache", "object_count"]
+SIGNAL_FILES = ["log_level", "read_only", "profile_xml", "refresh_time"]
 
 class FedoraFS < FuseFS::FuseDir
   class PathError < Exception; end
     
-  attr_reader :repo, :splitters, :refresh_time, :last_refresh, :logger
-  attr_accessor :read_only
+  attr_reader :repo, :splitters, :last_refresh, :logger
+  attr_accessor :read_only, :profile_xml, :refresh_time
   
 #  def respond_to?(sym)
 #    result = super(sym)
 #    $stderr.puts "respond_to?(#{sym.inspect}) :: #{result}"
 #    result
 #  end
-  
+    
   def initialize(init_opts = {})
     opts = Marshal::load(Marshal::dump(init_opts)) # deep copy
     if opts[:cert_file]
@@ -47,6 +48,7 @@ class FedoraFS < FuseFS::FuseDir
     end
     
     @logger = opts.delete(:logger) || Logger.new($stderr)
+    @logger.level = opts.delete(:log_level) || @logger.level
     @refresh_time = opts.delete(:refresh_time) || DEFAULT_REFRESH
     @last_refresh = nil
     @cache = LruHash.new(opts.delete(:cache_size) || DEFAULT_CACHE)
@@ -58,7 +60,7 @@ class FedoraFS < FuseFS::FuseDir
         @splitters[k] = Regexp.compile(v.gsub(/^\/|\/$/,''))
       end
     end
-    @list_profiles = opts.delete(:profile_xml) ? true : false
+    @profile_xml = opts.delete(:profile_xml) ? true : false
     @read_only = opts.delete(:read_only) ? true : false
   end
   
@@ -77,16 +79,13 @@ class FedoraFS < FuseFS::FuseDir
       current_dir, dir_part, parts, pid = traverse(parts)
       if current_dir.nil?
         files = [FOXML_XML]
-        files << PROPERTIES_XML if @list_profiles
-        begin
+        files << PROPERTIES_XML if @profile_xml
+        with_exception_logging([]) do
           datastreams(pid).each do |ds|
             mime = MIME::Types[ds_properties(pid,ds)['dsmime']].first
             files << (mime.nil? ? ds : "#{ds}.#{mime.extensions.first}")
-            files << "#{ds}.#{PROPERTIES_XML}" if @list_profiles
+            files << "#{ds}.#{PROPERTIES_XML}" if @profile_xml
           end
-        rescue Exception => e
-          log_exception(e)
-          []
         end
         if parts.empty?
           files
@@ -99,7 +98,7 @@ class FedoraFS < FuseFS::FuseDir
       end
     end
   end
-
+  
   def directory?(path)
     return false if path =~ /\._/
     return false if is_attribute_file?(path)
@@ -119,7 +118,7 @@ class FedoraFS < FuseFS::FuseDir
   
   def file?(path)
     return false if path =~ /\._/
-    return true if is_attribute_file?(path)
+    return true if is_attribute_file?(path) or is_signal_file?(path)
     parts = scan_path(path)
     current_dir, dir_part, parts, pid = begin
       traverse(parts)
@@ -137,7 +136,7 @@ class FedoraFS < FuseFS::FuseDir
   
   def size(path)
     return false if path =~ /\._/
-    if is_attribute_file?(path)
+    if is_attribute_file?(path) or is_signal_file?(path)
       return read_file(path).length
     else
       parts = scan_path(path)
@@ -183,34 +182,36 @@ class FedoraFS < FuseFS::FuseDir
   
   def read_file(path)
     return '' if path =~ /\._/
-    begin
-      if is_attribute_file?(path)
-        accessor = File.basename(path,File.extname(path)).sub(/^\.+/,'').to_sym
-        content = self.send(accessor)
-        return "#{content.to_s}\n"
-      else
-        parts = scan_path(path)
-        current_dir, dir_part, parts, pid = traverse(parts)
-        fname = parts.last
-        if fname == FOXML_XML
-          @repo["objects/#{pid}/export"].get
-        elsif fname == PROPERTIES_XML
-          @repo["objects/#{pid}?format=xml"].get
-        elsif fname =~ /^(.+)\.#{PROPERTIES_XML}$/
-          dsid = $1
-          @repo["objects/#{pid}/datastreams/#{dsid}.xml"].get
+    unless write_stack[path].nil?
+      write_stack[path]
+    else
+      with_exception_logging do
+        if is_attribute_file?(path) or is_signal_file?(path)
+          accessor = File.basename(path,File.extname(path)).sub(/^\.+/,'').to_sym
+          content = self.send(accessor)
+          "#{content.to_s}\n"
         else
-          dsid = dsid_from_filename(fname)
-          @repo["objects/#{pid}/datastreams/#{dsid}/content"].get
+          parts = scan_path(path)
+          current_dir, dir_part, parts, pid = traverse(parts)
+          fname = parts.last
+          if fname == FOXML_XML
+            @repo["objects/#{pid}/export"].get
+          elsif fname == PROPERTIES_XML
+            @repo["objects/#{pid}?format=xml"].get
+          elsif fname =~ /^(.+)\.#{PROPERTIES_XML}$/
+            dsid = $1
+            @repo["objects/#{pid}/datastreams/#{dsid}.xml"].get
+          else
+            dsid = dsid_from_filename(fname)
+            @repo["objects/#{pid}/datastreams/#{dsid}/content"].get
+          end
         end
       end
-    rescue Exception => e
-      log_exception(e)
     end
   end
   
   def can_write?(path)
-    if path =~ /\._/ # We'll fake it out in #write_to()
+    if is_signal_file?(path) or (path =~ /\._/) # We'll fake it out in #write_to()
       return true
     elsif read_only or is_attribute_file?(path)
       return false
@@ -221,19 +222,29 @@ class FedoraFS < FuseFS::FuseDir
   end
   
   def write_to(path,content)
-    return content if read_only or (path =~ /\._/) or (path =~ /#{FOXML_XML}$/) or (path =~ /#{PROPERTIES_XML}$/)
-    begin
-      parts = scan_path(path)
-      current_dir, dir_part, parts, pid = traverse(parts)
-      fname = parts.last
-      dsid = dsid_from_filename(fname)
-      mime = ds_properties(pid,dsid)['dsmime'] || 'application/octet-stream'
-      resource = @repo["objects/#{pid}/datastreams/#{dsid}?logMessage=Fedora+FUSE+FS"]
-      resource.put(content, :content_type => mime)
-      return true
-    rescue Exception => e
-      return false
+    if content.empty? and write_stack[path].nil?
+      write_stack[path] = content
+    else
+      write_stack.delete(path)
+      with_exception_logging do
+        if is_signal_file?(path)
+          @logger.debug("Setting #{File.basename(path)} to #{content.chomp.inspect}")
+          accessor = "#{File.basename(path)}=".to_sym
+          self.send(accessor, content)
+        else
+          unless read_only or (path =~ /\._/) or (path =~ /#{FOXML_XML}$/) or (path =~ /#{PROPERTIES_XML}$/)
+            parts = scan_path(path)
+            current_dir, dir_part, parts, pid = traverse(parts)
+            fname = parts.last
+            dsid = dsid_from_filename(fname)
+            mime = ds_properties(pid,dsid)['dsmime'] || 'application/octet-stream'
+            resource = @repo["objects/#{pid}/datastreams/#{dsid}?logMessage=Fedora+FUSE+FS"]
+            resource.put(content, :content_type => mime)
+          end
+        end
+      end
     end
+    return content
   end
   
   def can_mkdir?(path)
@@ -262,14 +273,52 @@ class FedoraFS < FuseFS::FuseDir
     result
   end
   
+  def log_level
+    @logger.level
+  end
+  
+  def log_level=(value)
+    @logger.level = value
+  end
+  
+  def read_only=(value)
+    @read_only = bool(value)
+  end
+  
+  def profile_xml=(value)
+    @profile_xml = bool(value)
+  end
+  
+  def refresh_time=(value)
+    @refresh_time = value.to_i
+  end
+  
   private
+  def bool(value)
+    if value.is_a?(String)
+      value.empty? ? value : value.chomp == 'true'
+    else
+      value ? true : false
+    end
+  end
+  
+  
   def is_attribute_file?(path)
     File.dirname(path) == '/' and ATTRIBUTE_FILES.include?(File.basename(path))
   end
+
+  def is_signal_file?(path)
+    File.dirname(path) == '/' and SIGNAL_FILES.include?(File.basename(path))
+  end
   
-  def log_exception(e)
-    @logger.error(e.message)
-    @logger.debug(e.backtrace)
+  def with_exception_logging(default = nil)
+    begin
+      return yield
+    rescue Exception => e
+      @logger.error(e.message)
+      @logger.debug(e.backtrace)
+      return default
+    end
   end
   
   def traverse(parts)
@@ -291,6 +340,10 @@ class FedoraFS < FuseFS::FuseDir
     return([current_dir, dir_part, parts, pid])
   end
 
+  def write_stack
+    @write_stack ||= {}
+  end
+  
   def datastreams(pid)
     return [] unless pid =~ /^[^\.].+:.+$/
     obj = cache(pid)
