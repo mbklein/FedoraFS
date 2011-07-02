@@ -31,7 +31,7 @@ class FedoraFS < FuseFS::FuseDir
     :cert_file => nil, :key_file => nil, :key_pass => '',
     :logdev => $stderr, :log_level => Logger::INFO,
     :cache_size => 1000, :refresh_time => 120,
-    :attribute_xml => false, :read_only => false
+    :attribute_xml => false, :read_only => false,
     :splitters => {},
   }
   DEFAULT_SPLITTERS = { :default => /.+/, 'fedora-system' => /.+/ }
