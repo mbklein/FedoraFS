@@ -8,75 +8,61 @@ require 'json'
 require 'logger'
 require 'nokogiri'
 require 'optparse'
+require 'ostruct'
 require 'rest-client'
 require 'rufus/lru'
 require 'mime/types'
 
 include FuseFS
 
-FOXML_XML = 'foxml.xml'
-PROPERTIES_XML = 'profile.xml'
-RISEARCH_DIRECTORY_PARAMS = { :type => 'triples', :lang => 'spo', :format => 'count' }
-RISEARCH_DIRECTORY_TEMPLATE = "<info:fedora/%1$s> <dc:identifier> '%1$s'"
-RISEARCH_CONTENTS_PARAMS = { :type => 'tuples', :lang => 'itql', :format => 'CSV' }
-RISEARCH_CONTENTS_TEMPLATE = "select $object from <#ri> where $object <info:fedora/fedora-system:def/model#label> $label"
-DEFAULT_CACHE = 1000
-DEFAULT_REFRESH = 120
-DEFAULT_SPLITTERS = { :default => /.+/, 'fedora-system' => /.+/ }
-ATTRIBUTE_FILES = ["last_refresh", "next_refresh", "object_cache", "object_count"]
-SIGNAL_FILES = ["log_level", "read_only", "attribute_xml", "refresh_time"]
-
 class FedoraFS < FuseFS::FuseDir
   class PathError < Exception; end
+
+  FOXML_XML = 'foxml.xml'
+  PROPERTIES_XML = 'profile.xml'
+  RISEARCH_CONTENTS_PARAMS = { :type => 'tuples', :lang => 'itql', :format => 'CSV' }
+  RISEARCH_CONTENTS_TEMPLATE = "select $object from <#ri> where $object <info:fedora/fedora-system:def/model#label> $label"
+  SPECIAL_FILES = {
+    :attributes => ["last_refresh", "next_refresh", "object_cache", "object_count"],
+    :signals    => ["log_level", "read_only", "attribute_xml", "refresh_time"]
+  }
+  DEFAULT_OPTS = {
+    :url => 'http://localhost:8983/fedora/', :user => nil, :password => nil,
+    :cert_file => nil, :key_file => nil, :key_pass => '',
+    :logdev => $stderr, :log_level => Logger::INFO,
+    :cache_size => 1000, :refresh_time => 120,
+    :attribute_xml => false, :read_only => false
+    :splitters => {},
+  }
+  DEFAULT_SPLITTERS = { :default => /.+/, 'fedora-system' => /.+/ }
     
-  attr_reader :repo, :splitters, :last_refresh, :logger
+  attr_reader :repo, :last_refresh, :logger, :opts
   attr_accessor :read_only, :attribute_xml, :refresh_time
   
-#  def respond_to?(sym)
-#    result = super(sym)
-#    $stderr.puts "respond_to?(#{sym.inspect}) :: #{result}"
-#    result
-#  end
-    
   def initialize(init_opts = {})
-    opts = Marshal::load(Marshal::dump(init_opts)) # deep copy
-    if opts[:cert_file]
-      opts[:ssl_client_cert] = OpenSSL::X509::Certificate.new(File.read(opts.delete(:cert_file)))
+    @opts = OpenStruct.new(DEFAULT_OPTS.merge(init_opts))
+
+    rest_opts = { :user => opts.user, :password => opts.password }
+    unless opts.cert_file.nil?
+      rest_opts[:ssl_client_cert] = OpenSSL::X509::Certificate.new(File.read(opts.cert_file))
     end
-    if opts[:key_file]
-      opts[:ssl_client_key] = OpenSSL::PKey::RSA.new(File.read(opts.delete(:key_file)), opts.delete(:key_pass))
+    unless opts.key_file.nil?
+      rest_opts[:ssl_client_key] = OpenSSL::PKey::RSA.new(File.read(opts.key_file), opts.key_pass)
     end
+    @repo = RestClient::Resource.new(opts.url, rest_opts)
     
-    @logdev = opts.delete(:log_file) || $stderr
-    @loglvl = opts.delete(:log_level) || Logger::INFO
-    @refresh_time = opts.delete(:refresh_time) || DEFAULT_REFRESH
     @last_refresh = nil
-    @cache = LruHash.new(opts.delete(:cache_size) || DEFAULT_CACHE)
+    @cache = LruHash.new(opts.cache_size)
     @pids = nil
-    @repo = RestClient::Resource.new(opts.delete(:url), opts)
-    @splitters = DEFAULT_SPLITTERS.merge(opts.delete(:splitters) || {})
-    @splitters.each_pair do |k,v| 
+    
+    opts.splitters = DEFAULT_SPLITTERS.merge(opts.splitters)
+    opts.splitters.each_pair do |k,v| 
       if v.is_a?(String)
-        @splitters[k] = Regexp.compile(v.gsub(/^\/|\/$/,''))
+        opts.splitters[k] = Regexp.compile(v.gsub(/^\/|\/$/,''))
       end
     end
-    @attribute_xml = opts.delete(:attribute_xml) ? true : false
-    @read_only = opts.delete(:read_only) ? true : false
   end
   
-  def logger
-    @logger ||= Logger.new(@logdev)
-    @logger.level = @loglvl
-    @logger
-  end
-  
-  def cache(pid)
-    unless @cache.has_key?(pid)
-      @cache[pid] = {}
-    end
-    @cache[pid]
-  end
-
   def contents(path)
     parts = scan_path(path)
     if parts.empty?
@@ -85,12 +71,12 @@ class FedoraFS < FuseFS::FuseDir
       current_dir, dir_part, parts, pid = traverse(parts)
       if current_dir.nil?
         files = [FOXML_XML]
-        files << PROPERTIES_XML if @attribute_xml
+        files << PROPERTIES_XML if attribute_xml
         with_exception_logging([]) do
           datastreams(pid).each do |ds|
             mime = MIME::Types[ds_properties(pid,ds)['dsmime']].first
             files << (mime.nil? ? ds : "#{ds}.#{mime.extensions.first}")
-            files << "#{ds}.#{PROPERTIES_XML}" if @attribute_xml
+            files << "#{ds}.#{PROPERTIES_XML}" if attribute_xml
           end
         end
         if parts.empty?
@@ -265,8 +251,38 @@ class FedoraFS < FuseFS::FuseDir
     return true # We're never actually going to delete anything, though.
   end
 
+  # Attribute accessors
+  def attribute_xml
+    opts.attribute_xml
+  end
+  
+  def attribute_xml=(value)
+    opts.attribute_xml = bool(value)
+  end
+  
+  def cache(pid)
+    unless @cache.has_key?(pid)
+      @cache[pid] = {}
+    end
+    @cache[pid]
+  end
+
+  def log_level
+    logger.level
+  end
+  
+  def log_level=(value)
+    logger.level = opts.log_level = value.to_i
+  end
+  
+  def logger
+    @logger ||= Logger.new(opts.logdev)
+    @logger.level = opts.log_level
+    @logger
+  end
+  
   def next_refresh
-    @last_refresh.nil? ? Time.now : (@last_refresh + @refresh_time)
+    @last_refresh.nil? ? Time.now : (@last_refresh + opts.refresh_time)
   end
   
   def object_cache
@@ -279,41 +295,26 @@ class FedoraFS < FuseFS::FuseDir
     result
   end
   
-  def log_level
-    logger.level
-  end
-  
-  def log_level=(value)
-    logger.level = @loglvl = value.to_i
+  def read_only
+    opts.read_only
   end
   
   def read_only=(value)
-    @read_only = bool(value)
-  end
-  
-  def attribute_xml=(value)
-    @attribute_xml = bool(value)
+    opts.read_only = bool(value)
   end
   
   def refresh_time=(value)
-    @refresh_time = value.to_i
+    opts.refresh_time = value.to_i
   end
   
   private
+  # Convenience methods
   def bool(value)
     if value.is_a?(String)
       value.empty? ? value : value.chomp == 'true'
     else
       value ? true : false
     end
-  end
-  
-  def is_attribute_file?(path)
-    File.dirname(path) == '/' and ATTRIBUTE_FILES.include?(File.basename(path))
-  end
-
-  def is_signal_file?(path)
-    File.dirname(path) == '/' and SIGNAL_FILES.include?(File.basename(path))
   end
   
   def with_exception_logging(default = nil)
@@ -326,27 +327,21 @@ class FedoraFS < FuseFS::FuseDir
     end
   end
   
-  def traverse(parts)
-    dir_part = parts.shift
-    pid = "#{dir_part}:"
-    current_dir = pid_tree[dir_part]
-    if current_dir.nil?
-      raise PathError, "Path not found: #{File.join(*parts)}"
-    end
-    until parts.empty? or current_dir.nil?
-      dir_part = parts.shift
-      if current_dir.has_key?(dir_part)
-        pid += dir_part
-        current_dir = current_dir[dir_part]
-      else
-        raise PathError, "Path not found: #{File.join(*parts)}"
-      end
-    end
-    return([current_dir, dir_part, parts, pid])
-  end
-
   def write_stack
     @write_stack ||= {}
+  end
+  
+  # Content methods
+  def dsid_from_filename(filename)
+    File.basename(filename,File.extname(filename))
+  end
+  
+  def is_attribute_file?(path)
+    File.dirname(path) == '/' and SPECIAL_FILES[:attributes].include?(File.basename(path))
+  end
+
+  def is_signal_file?(path)
+    File.dirname(path) == '/' and SPECIAL_FILES[:signals].include?(File.basename(path))
   end
   
   def datastreams(pid)
@@ -371,10 +366,6 @@ class FedoraFS < FuseFS::FuseDir
     obj[dsid]
   end
   
-  def dsid_from_filename(filename)
-    File.basename(filename,File.extname(filename))
-  end
-  
   def pid_tree
     if @pids.nil? or (Time.now >= next_refresh)
       @pids = {}
@@ -384,7 +375,7 @@ class FedoraFS < FuseFS::FuseDir
       pids.shift
       pids.each do |pid|
         namespace, id = pid.split(/:/,2)
-        splitter = @splitters[namespace] || @splitters[:default]
+        splitter = opts.splitters[namespace] || opts.splitters[:default]
         stem = @pids[namespace] ||= {}
         pidtree = id.scan(splitter).flatten
         until pidtree.empty?
@@ -395,5 +386,24 @@ class FedoraFS < FuseFS::FuseDir
       @last_refresh = Time.now
     end
     @pids
+  end
+
+  def traverse(parts)
+    dir_part = parts.shift
+    pid = "#{dir_part}:"
+    current_dir = pid_tree[dir_part]
+    if current_dir.nil?
+      raise PathError, "Path not found: #{File.join(*parts)}"
+    end
+    until parts.empty? or current_dir.nil?
+      dir_part = parts.shift
+      if current_dir.has_key?(dir_part)
+        pid += dir_part
+        current_dir = current_dir[dir_part]
+      else
+        raise PathError, "Path not found: #{File.join(*parts)}"
+      end
+    end
+    return([current_dir, dir_part, parts, pid])
   end
 end
