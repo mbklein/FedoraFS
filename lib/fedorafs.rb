@@ -122,7 +122,7 @@ class FedoraFS < FuseFS::FuseDir
     else
       file = parts.last
       list = contents(File.dirname(path))
-      list.any? { |entry| entry == file or File.basename(entry,File.extname(entry))+'.'+PROPERTIES_XML == file }
+      list.any? { |entry| entry == file or PROPERTIES_XML == file or File.basename(entry,File.extname(entry))+'.'+PROPERTIES_XML == file }
     end
   end
   
