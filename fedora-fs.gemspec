@@ -35,7 +35,7 @@ Gem::Specification.new do |s|
   s.add_development_dependency "ruby-debug"
   s.add_development_dependency "yard"
  
-  s.files        = FileList['lib/**/*.rb', 'bin/*', '[A-Z]*'].to_a
+  s.files        = FileList['lib/**/*.rb', 'bin/*', 'config/*', '[A-Z]*'].to_a
   s.bindir       = 'bin'
   s.require_path = 'lib'
 end
