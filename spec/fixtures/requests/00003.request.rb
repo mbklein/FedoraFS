@@ -1,0 +1,20 @@
+FakeWeb.register_uri(:get, "http://fedorafs.example.edu/fedora/objects/druid:bd935rr8206/datastreams/DC.xml",
+  :status => ["200", "OK"], :content_type => "text/xml", 
+  :body => %{<?xml version="1.0" encoding="UTF-8"?>
+<datastreamProfile xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.fedora.info/definitions/1/0/management/ https://fedora-dev.stanford.edu:443/datastreamProfile.xsd" pid="druid:bd935rr8206" dsID="DC">
+  <dsLabel>Dublin Core Record for this object</dsLabel>
+  <dsVersionID>DC1.0</dsVersionID>
+  <dsCreateDate>2011-06-28T00:01:37.935Z</dsCreateDate>
+  <dsState>A</dsState>
+  <dsMIME>text/xml</dsMIME>
+  <dsFormatURI>http://www.openarchives.org/OAI/2.0/oai_dc/</dsFormatURI>
+  <dsControlGroup>X</dsControlGroup>
+  <dsSize>558</dsSize>
+  <dsVersionable>false</dsVersionable>
+  <dsInfoType/>
+  <dsLocation>druid:bd935rr8206+DC+DC1.0</dsLocation>
+  <dsLocationType/>
+  <dsChecksumType>DISABLED</dsChecksumType>
+  <dsChecksum>none</dsChecksum>
+</datastreamProfile>
+})
