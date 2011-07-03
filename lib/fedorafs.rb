@@ -20,8 +20,7 @@ class FedoraFS < FuseFS::FuseDir
 
   FOXML_XML = 'foxml.xml'
   PROPERTIES_XML = 'profile.xml'
-  RISEARCH_CONTENTS_PARAMS = { :type => 'tuples', :lang => 'itql', :format => 'CSV' }
-  RISEARCH_CONTENTS_TEMPLATE = "select $object from <#ri> where $object <info:fedora/fedora-system:def/model#label> $label"
+  RISEARCH_CONTENTS_PARAMS = { :query => "select $object from <#ri> where $object <info:fedora/fedora-system:def/model#label> $label", :type => 'tuples', :lang => 'itql', :format => 'CSV' }
   SPECIAL_FILES = {
     :attributes => ["last_refresh", "next_refresh", "object_cache", "object_count"],
     :signals    => ["log_level", "read_only", "attribute_xml", "refresh_time"]
@@ -303,6 +302,10 @@ class FedoraFS < FuseFS::FuseDir
     opts.read_only = bool(value)
   end
   
+  def refresh_time
+    opts.refresh_time
+  end
+  
   def refresh_time=(value)
     opts.refresh_time = value.to_i
   end
@@ -369,8 +372,7 @@ class FedoraFS < FuseFS::FuseDir
   def pid_tree
     if @pids.nil? or (Time.now >= next_refresh)
       @pids = {}
-      params = RISEARCH_CONTENTS_PARAMS.merge(:query => RISEARCH_CONTENTS_TEMPLATE)
-      response = @repo['risearch'].post(params)
+      response = @repo['risearch'].post(RISEARCH_CONTENTS_PARAMS)
       pids = response.split(/\n/).collect { |pid| pid.sub(%r{^info:fedora/},'') }
       pids.shift
       pids.each do |pid|
