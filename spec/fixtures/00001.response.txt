@@ -1,6 +1,4 @@
-FakeWeb.register_uri(:post, "http://fedorafs.example.edu/fedora/risearch", 
-  :status => ["200", "OK"], :content_type => "text/plain",
-  :body => %{"object"
+"object"
 info:fedora/changeme:1
 info:fedora/changeme:2
 info:fedora/changeme:3
@@ -68,4 +66,3 @@ info:fedora/fedora-system:ContentModel-3.0
 info:fedora/fedora-system:FedoraObject-3.0
 info:fedora/fedora-system:ServiceDefinition-3.0
 info:fedora/fedora-system:ServiceDeployment-3.0
-})
