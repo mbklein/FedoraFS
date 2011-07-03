@@ -1,0 +1,10 @@
+--- 
+:url: http://fedorafs.example.edu/fedora/
+:user: fedoraAdmin
+:password: fedoraAdmin
+:splitters: 
+  local: /(..?)/
+  druid: /([a-z]{2})([0-9]{3})([a-z]{2})([0-9]{4})/
+:vol_name: fedora
+:mount_point: /Volumes/fedora
+:logdev: /dev/null
