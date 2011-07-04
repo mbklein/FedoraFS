@@ -101,6 +101,7 @@ describe FedoraFS do
   end
   
   it "should write signal files" do
+    @fs.contents('/')
     @fs.log_level.should == Logger::INFO
     @fs.read_file('/log_level').chomp.to_i.should == Logger::INFO
     @fs.write_to('/log_level',"#{Logger::DEBUG}\n").chomp.to_i.should == Logger::DEBUG
@@ -123,6 +124,7 @@ describe FedoraFS do
   end
   
   it "should know which files can be written" do
+    @fs.contents('/')
     @fs.can_write?('/druid/bd/935/rr/8206/DC.xml').should be_true
     @fs.can_write?('/druid/bd/935/rr/8206/DC.profile.xml').should be_false
     @fs.can_write?('/druid/bd/935/rr/8206/foxml.xml').should be_false
@@ -135,6 +137,30 @@ describe FedoraFS do
     @fs.can_mkdir?('/namespace').should be_false
     @fs.can_rmdir?('/druid').should be_false
     @fs.can_delete?('/druid/bd/935/rr/8206/DC.xml').should be_true
+  end
+  
+  it "should write a datastream" do
+    @fs.contents('/')
+    @fs.write_to('/druid/bd/935/rr/8206/DC.xml','').should == ''
+    @fs.read_file('/druid/bd/935/rr/8206/DC.xml').should == ''
+    
+    new_xml = fixture_content('DC.xml')
+    repo = @fs.repo
+    resource1 = repo['objects/druid:bd935rr8206/datastreams/DC.xml']
+    resource2 = stub("stub_repo")
+    repo.should_receive(:[]).with("objects/druid:bd935rr8206/datastreams/DC.xml").and_return(resource1)
+    repo.should_receive(:[]).with("objects/druid:bd935rr8206/datastreams/DC?logMessage=Fedora+FUSE+FS").and_return(resource2)
+    resource2.should_receive(:put)
+    @fs.write_to('/druid/bd/935/rr/8206/DC.xml', new_xml).should == new_xml
+  end
+  
+  it "should support utime, atime, ctime, mtime, even though FuseFS doesn't (yet)" do
+    real_time = Time.parse('2011-06-28T00:01:37.935Z')
+    @fs.contents('/')
+    @fs.utime('/druid/bd/935/rr/8206/DC.xml').should == real_time
+    @fs.atime('/druid/bd/935/rr/8206/DC.xml').should == real_time
+    @fs.mtime('/druid/bd/935/rr/8206/DC.xml').should == real_time
+    @fs.ctime('/druid/bd/935/rr/8206/DC.xml').should == real_time
   end
   
 end

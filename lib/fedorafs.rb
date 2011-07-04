@@ -165,7 +165,8 @@ class FedoraFS < FuseFS::FuseDir
     parts = scan_path(path)
     current_dir, dir_part, parts, pid = traverse(parts)
     begin
-      Time.parse(ds_properties(pid, parts[-1])['dscreatedate'])
+      dsid = dsid_from_filename(parts.last)
+      Time.parse(ds_properties(pid, dsid)['dscreatedate'])
     rescue
       Time.now
     end

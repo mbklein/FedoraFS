@@ -3,3 +3,5 @@ Gemfile.lock
 .DS_Store
 rdoc
 .yardoc
+coverage
+coverage.data
