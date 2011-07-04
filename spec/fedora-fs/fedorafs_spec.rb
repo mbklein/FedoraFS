@@ -8,6 +8,8 @@ describe FedoraFS do
   
   before :each do
     opts = YAML.load(fixture_content("spec_config.yaml"))
+    opts[:cert_file] = File.join(File.dirname(__FILE__), "..", "fixtures", "fake.pem")
+    opts[:key_file] = File.join(File.dirname(__FILE__), "..", "fixtures", "fake.key")
     @fs = FedoraFS.new(opts)
   end
   
