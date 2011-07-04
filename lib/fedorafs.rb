@@ -164,12 +164,8 @@ class FedoraFS < FuseFS::FuseDir
   def utime(path)
     parts = scan_path(path)
     current_dir, dir_part, parts, pid = traverse(parts)
-    begin
-      dsid = dsid_from_filename(parts.last)
-      Time.parse(ds_properties(pid, dsid)['dscreatedate'])
-    rescue
-      Time.now
-    end
+    dsid = dsid_from_filename(parts.last)
+    Time.parse(ds_properties(pid, dsid)['dscreatedate'])
   end
   
   def read_file(path)
