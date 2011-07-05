@@ -12,10 +12,12 @@ require 'ostruct'
 require 'rest-client'
 require 'rufus/lru'
 require 'mime/types'
-
-include FuseFS
+require 'traceable'
 
 class FedoraFS < FuseFS::FuseDir
+  include FuseFS
+  include Traceable
+
   class PathError < Exception; end
 
   FOXML_XML = 'foxml.xml'
@@ -39,6 +41,9 @@ class FedoraFS < FuseFS::FuseDir
   attr_accessor :read_only, :attribute_xml, :refresh_time
   
   def initialize(init_opts = {})
+    traceables = Array(init_opts.delete(:trace_methods))
+    self.class.trace(*traceables) unless traceables.empty?
+
     @opts = OpenStruct.new(DEFAULT_OPTS.merge(init_opts))
 
     rest_opts = { :user => opts.user, :password => opts.password }
@@ -129,6 +134,8 @@ class FedoraFS < FuseFS::FuseDir
     return false if path =~ /\._/
     if is_attribute_file?(path) or is_signal_file?(path)
       return read_file(path).length
+    elsif write_stack.has_key?(path)
+      write_stack[path].length
     else
       parts = scan_path(path)
       current_dir, dir_part, parts, pid = begin
