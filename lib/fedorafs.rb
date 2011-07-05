@@ -134,6 +134,8 @@ class FedoraFS < FuseFS::FuseDir
     return false if path =~ /\._/
     if is_attribute_file?(path) or is_signal_file?(path)
       return read_file(path).length
+    elsif write_stack.has_key?(path)
+      write_stack[path].length
     else
       parts = scan_path(path)
       current_dir, dir_part, parts, pid = begin
