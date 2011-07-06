@@ -2,10 +2,14 @@ module Traceable
   
   def self.included(mod)
     mod.module_eval do
-      unless self.instance_methods.include?('logger')
-        require 'logger'
-        def logger
-          @__trace_logger__ ||= Logger.new($stderr)
+      def output_trace_msg(msg)
+        logdev = respond_to?(:logger) ? logger : $stderr
+        if logdev.respond_to?(:debug)
+          logdev.debug(msg)
+        elsif logdev.respond_to?(:puts)
+          logdev.puts(msg)
+        else
+          logdev << msg
         end
       end
       
@@ -15,9 +19,9 @@ module Traceable
             self.class_eval do
               alias_method :"__TRACE_#{method_name.to_s}__", method_name
               define_method method_name do |*args, &block|
-                logger.debug("TRACE : #{method_name}(#{args.collect { |a| a.inspect }.join(',')})")
+                output_trace_msg("TRACE : #{method_name}(#{args.collect { |a| a.inspect }.join(',')})")
                 result = self.send(:"__TRACE_#{method_name.to_s}__", *args, &block)
-                logger.debug("RESULT: #{result.inspect}")
+                output_trace_msg("RESULT: #{result.inspect}")
                 result
               end
             end
