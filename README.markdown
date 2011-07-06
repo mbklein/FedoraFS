@@ -95,8 +95,9 @@ FedoraFS filesystem:
 
 ## History
 
-* **0.3.0** - Initial documented release
+* **0.3.2** - Remove non-sample config files from gemspec
 * **0.3.1** - Add tests; fix write_to() datastream bug
+* **0.3.0** - Initial documented release
 
 ## Copyright
 

@@ -6,7 +6,7 @@ $:.unshift lib unless $:.include?(lib)
 
 Gem::Specification.new do |s|
   s.name        = "fedora-fs"
-  s.version     = '0.3.1'
+  s.version     = '0.3.2'
   s.platform    = Gem::Platform::RUBY
   s.authors     = ["Michael B. Klein"]
   s.email       = ["mbklein@stanford.edu"]
@@ -35,7 +35,7 @@ Gem::Specification.new do |s|
   s.add_development_dependency "ruby-debug"
   s.add_development_dependency "yard"
  
-  s.files        = FileList['lib/**/*.rb', 'bin/*', 'config/*', '[A-Z]*'].to_a
+  s.files        = FileList['lib/**/*.rb', 'bin/*', 'config/sample_config.yml', 'README.*'].to_a
   s.bindir       = 'bin'
   s.require_path = 'lib'
 end
